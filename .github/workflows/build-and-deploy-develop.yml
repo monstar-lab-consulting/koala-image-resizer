@@ -2,7 +2,7 @@ name: Build and Deploy - Develop
 
 on:
   push:
-    branches: [ develop, feature/TM-2056-cicd-workflow ]
+    branches: [ develop ]
   pull_request:
 
 env:
