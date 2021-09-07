@@ -1,0 +1,164 @@
+name: Build and Deploy - Presales
+
+on:
+  push:
+    branches: [ presales ]
+  pull_request:
+
+env:
+  ENV_ID: presales
+  ENV_ID_ALT: Presales
+  AWS_REGION: ap-northeast-1
+
+jobs:
+
+  build:
+    name: Build and Push Image
+    runs-on: ubuntu-latest
+    environment: presales
+
+    steps:
+      - name: Notify Slack
+        uses: act10ns/slack@v1
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          status: starting
+
+      - name: Checkout Repo
+        uses: actions/checkout@v2
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        if: github.event_name == 'push'
+        uses: aws-actions/amazon-ecr-login@v1
+
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
+        if: github.event_name == 'push'
+        env:
+          ECR_REPOSITORY: ${{ env.ENV_ID }}-api-img-resizer
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_NAME: koala-image-resizer
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          docker build -f Dockerfile -t $IMAGE_NAME .
+          docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker tag $IMAGE_NAME:latest $ECR_REGISTRY/$ECR_REPOSITORY:latest
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
+
+      - name: Notify Slack
+        uses: act10ns/slack@v1
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+
+  deploy:
+    if: ${{ github.event_name == 'push' }}
+    name: Deploy New Image
+    runs-on: ubuntu-latest
+    environment: presales
+    needs: build
+
+    steps:
+      - name: Notify Slack
+        uses: act10ns/slack@v1
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          status: starting
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create Deployment
+        id: create-deployment
+        env:
+          DEPLOY_APP: AppECS-${{ env.ENV_ID_ALT }}ApiCluster-${{ env.ENV_ID_ALT }}ApiImgResizer
+          DEPLOY_GROUP: DgpECS-${{ env.ENV_ID_ALT }}ApiCluster-${{ env.ENV_ID_ALT }}ApiImgResizer
+          DEPLOY_BUCKET: ${{ env.ENV_ID }}-koala-deploy
+          DEPLOY_BUCKET_KEY: ${{ env.ENV_ID }}-api-img-resizer.json
+        run: |
+          aws deploy create-deployment \
+          --application-name $DEPLOY_APP \
+          --deployment-group-name $DEPLOY_GROUP \
+          --revision "revisionType=S3,s3Location={bucket=$DEPLOY_BUCKET,key=$DEPLOY_BUCKET_KEY,bundleType=JSON}"
+
+      - name: Notify Slack
+        uses: act10ns/slack@v1
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ env.SLACK_WEBHOOK_URL }}
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
+
+  cdn:
+    if: ${{ github.event_name == 'push' }}
+    name: Invalidate CDN
+    runs-on: ubuntu-latest
+    environment: presales
+    needs: deploy
+
+    steps:
+      - name: Notify Slack
+        uses: act10ns/slack@v1
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          status: starting
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Find Cloudfront Distribution Id
+        id: dist-id
+        env:
+          COMMENT: ${{ env.ENV_ID }}-cdn-media
+        run: |
+          aws cloudfront list-distributions \
+          | jq '.["DistributionList"]["Items"]' \
+          | jq 'map(select(.["Comment"] == "'$COMMENT'"))' \
+          | jq -r '.[]["Id"]' > output.txt
+
+          echo "::set-output name=id::$(cat output.txt)"
+
+      - name: Invalidate Cloudfront
+        uses: chetan/invalidate-cloudfront-action@master
+        env:
+          DISTRIBUTION: ${{ steps.dist-id.outputs.id }}
+          PATHS: '/*'
+          AWS_REGION: ${{ env.AWS_REGION }}
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+
+      - name: Notify Slack
+        uses: act10ns/slack@v1
+        if: always()
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        with:
+          status: ${{ job.status }}
+          steps: ${{ toJson(steps) }}
