@@ -3,7 +3,6 @@ name: Build and Deploy - Presales
 on:
   push:
     branches: [ presales ]
-  pull_request:
 
 env:
   ENV_ID: presales
