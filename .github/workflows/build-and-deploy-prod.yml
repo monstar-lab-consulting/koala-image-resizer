@@ -40,12 +40,10 @@ jobs:
 
       - name: Login to Amazon ECR
         id: login-ecr
-        if: github.event_name == 'push'
         uses: aws-actions/amazon-ecr-login@v1
 
       - name: Build, tag, and push image to Amazon ECR
         id: build-image
-        if: github.event_name == 'push'
         env:
           ECR_REPOSITORY: ${{ env.ENV_ID }}-api-img-resizer
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
@@ -68,7 +66,6 @@ jobs:
           steps: ${{ toJson(steps) }}
 
   deploy:
-    if: ${{ github.event_name == 'push' }}
     name: Deploy New Image
     runs-on: ubuntu-latest
     environment: production
@@ -95,7 +92,7 @@ jobs:
         env:
           DEPLOY_APP: AppECS-${{ env.ENV_ID_ALT }}ApiCluster-${{ env.ENV_ID_ALT }}ApiImgResizer
           DEPLOY_GROUP: DgpECS-${{ env.ENV_ID_ALT }}ApiCluster-${{ env.ENV_ID_ALT }}ApiImgResizer
-          DEPLOY_BUCKET: ${{ env.ENV_ID }}-koala-deploy
+          DEPLOY_BUCKET: ${{ env.ENV_ID }}-spiceup-deploy
           DEPLOY_BUCKET_KEY: ${{ env.ENV_ID }}-api-img-resizer.json
         run: |
           aws deploy create-deployment \
@@ -113,7 +110,6 @@ jobs:
           steps: ${{ toJson(steps) }}
 
   cdn:
-    if: ${{ github.event_name == 'push' }}
     name: Invalidate CDN
     runs-on: ubuntu-latest
     environment: production
