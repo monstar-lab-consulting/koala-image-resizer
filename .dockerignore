@@ -1,1 +1,2 @@
-vendor
+# Disabled to support caching in github actions
+# vendor
